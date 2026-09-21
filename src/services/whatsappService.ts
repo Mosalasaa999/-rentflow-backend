@@ -22,31 +22,29 @@ export async function sendWhatsAppMessage(
     return false;
   }
 
-  let contentSid = ''; 
-  let contentVariables = JSON.stringify(variables);
-
+  // Generate dynamic message content with 1-tap checkout links
+  let body = '';
   switch (templateName) {
     case 'rent_reminder_sufficient_balance':
-      contentSid = 'HX1234567890abcdef1234567890abcdef';
+      body = `🏠 *RentFlow Reminder*\n\nHi ${variables.tenantName}!\n\nYour rent payment of *${variables.currency} ${variables.amount}* is due.\n\nPay with 1-tap via Apple Pay, Google Pay, or Card:\n👉 ${variables.checkoutLink}\n\n_Protected by Open Banking overdraft prevention._`;
       break;
     case 'rent_reminder_insufficient_balance':
-      contentSid = 'HXabcdef1234567890abcdef1234567890';
+      body = `⚠️ *RentFlow Alert*\n\nHi ${variables.tenantName},\n\nYour rent of *${variables.currency} ${variables.amount}* is due soon. To prevent bank overdraft fees, you can pay using an alternate card or split payment:\n👉 ${variables.alternateLink}`;
       break;
     case 'payment_confirmation':
-      contentSid = 'HX0987654321fedcba0987654321fedcba';
+      body = `🎉 *Payment Confirmed!*\n\nHi ${variables.tenantName}, your rent payment of *${variables.currency} ${variables.amount}* was successful.\n\nReceipt ID: ${variables.receiptId}\n_Reported to credit bureau for credit score building._`;
       break;
     default:
-      throw new Error(`Unknown template: ${templateName}`);
+      body = `RentFlow update for ${variables.tenantName}`;
   }
 
   try {
-    await delay(100);
+    await delay(100); // Throttling protection
 
     const message = await client.messages.create({
       from: `whatsapp:${env.TWILIO_WHATSAPP_FROM}`,
       to: `whatsapp:${toPhoneNumber}`,
-      contentSid,
-      contentVariables,
+      body,
     });
 
     await prisma.auditLog.create({
@@ -59,7 +57,7 @@ export async function sendWhatsAppMessage(
       }
     });
 
-    logger.info({ sid: message.sid, to: toPhoneNumber }, 'WhatsApp message sent');
+    logger.info({ sid: message.sid, to: toPhoneNumber }, 'WhatsApp message sent successfully');
     return true;
   } catch (error: any) {
     logger.error({ err: error, to: toPhoneNumber }, 'Twilio WhatsApp sending failed');
