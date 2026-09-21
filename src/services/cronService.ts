@@ -28,28 +28,34 @@ export const rentCronWorker = new Worker('rent-cron', async (job) => {
   logger.info({ isDryRun }, 'Starting daily rent assessment batch');
 
   const now = new Date();
-  const startOfDay = new Date(now.setHours(0,0,0,0));
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   const leases = await prisma.lease.findMany({
     where: { status: 'ACTIVE' },
     include: { tenant: true, landlord: true }
   });
 
+  logger.info({ count: leases.length }, 'Active leases found in database');
+
   for (const lease of leases) {
     try {
-      let dueDate = new Date(now.getFullYear(), now.getMonth(), lease.dueDayOfMonth);
+      // Due date set to 23:59:59 of the due day
+      let dueDate = new Date(now.getFullYear(), now.getMonth(), lease.dueDayOfMonth, 23, 59, 59);
       if (dueDate < startOfDay) {
-        dueDate = new Date(now.getFullYear(), now.getMonth() + 1, lease.dueDayOfMonth);
+        dueDate = new Date(now.getFullYear(), now.getMonth() + 1, lease.dueDayOfMonth, 23, 59, 59);
       }
 
       const diffHours = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-      
-      if (diffHours > 0 && diffHours <= lease.reminderHoursBeforeDue) {
+      logger.info({ leaseId: lease.id, diffHours, reminderHours: lease.reminderHoursBeforeDue }, 'Evaluating lease window');
+
+      // Check if within reminder window (positive hours remaining or due today)
+      if (diffHours >= 0 && diffHours <= lease.reminderHoursBeforeDue) {
         const billingPeriod = `${dueDate.getFullYear()}-${(dueDate.getMonth() + 1).toString().padStart(2, '0')}`;
         const idempotencyKey = `lease_${lease.id}_${billingPeriod}`;
 
         const existingRecord = await prisma.paymentRecord.findUnique({ where: { idempotencyKey } });
         if (existingRecord && [PaymentStatus.PAID, PaymentStatus.PENDING].includes(existingRecord.status)) {
+          logger.info({ idempotencyKey }, 'Payment record already exists for this cycle, skipping');
           continue;
         }
 
@@ -83,13 +89,14 @@ export const rentCronWorker = new Worker('rent-cron', async (job) => {
               }
             });
 
-            await sendWhatsAppMessage(
+            const sent = await sendWhatsAppMessage(
               lease.tenant.phoneNumber, 
               'rent_reminder_sufficient_balance', 
               { tenantName: lease.tenant.name, amount: rentAmount.toString(), currency: lease.currency, checkoutLink: url },
               lease.tenant.whatsappOptIn
             );
-            remindersSentCounter.inc();
+            
+            if (sent) remindersSentCounter.inc();
           } else {
             const splitLink = await PaymentService.createSplitPaymentLink(lease, lease.tenant, rentAmount);
             
