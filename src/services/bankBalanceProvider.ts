@@ -64,6 +64,6 @@ export class MockBalanceProvider implements BankBalanceProvider {
   }
 }
 
-export const balanceProvider = env.NODE_ENV === 'production' 
+export const balanceProvider = (env.PLAID_CLIENT_ID && !env.PLAID_CLIENT_ID.includes('placeholder'))
   ? new PlaidBalanceProvider() 
   : new MockBalanceProvider();
